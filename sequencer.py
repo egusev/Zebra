@@ -171,18 +171,24 @@ class SimpleFeeder:
             self.validation_cum_counts = np.cumsum([file.trains for file in files])
             self.train_shuffle_map = np.random.permutation(self.train_cum_counts[-1])
 
+        def train_len(self):
+            return self.train_cum_counts[-1]
+
+        def validation_len(self):
+            return self.validation_cum_counts[-1]
+
         def get_train(self, idx):
             index = self.train_shuffle_map[idx]
             file_index = find_index(self.train_cum_counts, index)
             file = self.data[file_index]
             item_index = self.train_cum_counts[file_index - 1] if file_index > 0 else 0
-            return file[0][item_index], file[1][item_index], file[2][item_index],
+            return file[0][item_index], file[1][item_index], file[2][item_index]
 
         def get_validation(self, index):
             file_index = find_index(self.validation_cum_counts, index)
             file = self.data[file_index]
             item_index = (self.validation_cum_counts[file_index - 1] if file_index > 0 else 0) + file.trains
-            return file[0][item_index], file[1][item_index], file[2][item_index],
+            return file[0][item_index], file[1][item_index], file[2][item_index]
 
     class DataFile:
         def __init__(self, name, train=0.8):
