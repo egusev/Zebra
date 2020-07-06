@@ -1,12 +1,11 @@
-import numpy as np
 import tensorflow as tf
-import chessModel
-from tensorflow.keras.mixed_precision import experimental as mixed_precision
 from datetime import datetime
-from tensorflow import keras
+from tensorflow.keras.mixed_precision import experimental as mixed_precision
+
+import chessModel
 import sequencer
 
-s = sequencer.SimpleFeeder(batch_size=1024)
+s = sequencer.SimpleFeeder(['data1.npy', 'data2.npy', 'data3.npy', 'data4.npy', 'data5.npy'], files_per_batch=2, batch_size=1024)
 train = s.get_train()
 val = s.get_validation()
 
@@ -30,5 +29,6 @@ tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=logs,
 
 kala = model.fit(dataset=train,
                  validation_data=val,
-                 epochs=20,
+                 epochs=2,
+                 shuffle=False,
                  callbacks=[tensorboard_callback])
