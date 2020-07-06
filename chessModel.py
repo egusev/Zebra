@@ -156,7 +156,7 @@ class ChessModel:
     def fit(self, dataset, y=None, validation_data=None, batch_size=None, epochs=10,
             shuffle=True, val_split=None, callbacks=None):
         self.model.fit(x=dataset, y=y, batch_size=batch_size, epochs=epochs,
-                       shuffle=True, validation_split=val_split,
+                       shuffle=shuffle, validation_split=val_split,
                        validation_data=validation_data,
                        callbacks=callbacks)
         return self.model
