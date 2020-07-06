@@ -93,7 +93,7 @@ class SimpleFeeder:
             self.outer.shuffle_files()
 
         def update_file_sets(self, file_sets):
-            self.file_sets = [self.outer.MultiFilesAccessor2(files, self.data_accessor, self.batch_size) for files in file_sets]
+            self.file_sets = [self.outer.MultiFilesAccessor(files, self.data_accessor, self.batch_size) for files in file_sets]
             self.cum_counts = np.cumsum(list(map(lambda fs: fs.get_batch_count(), self.file_sets)))
             print(list(map(lambda file_set: file_set.name, self.file_sets)))
 
