@@ -32,8 +32,6 @@ class SimpleFeeder:
                 assert self.y1dim == file_meta.y1dim
                 assert self.y2dim == file_meta.y2dim
 
-        self.file_sets = []
-
         self.file_set_name = None
         self.file_set_names = []
         self.file_set_data = []
@@ -49,24 +47,29 @@ class SimpleFeeder:
                                            self.ValidationDataAccessor())
 
     def get_train(self):
+        self.train_seq.on_epoch_end()
         return self.train_seq
 
     def get_validation(self):
+        self.val_seq.on_epoch_end()
         return self.val_seq
 
     def shuffle_files(self):
         print("!!!! shuffle files!!!!\n")
         files_shuffle = np.random.permutation(len(self.file_metas))
         'list of file sets (metas)'
-        self.file_sets = [list(map(lambda idx: self.file_metas[idx], files_shuffle[i:i + self.files_per_batch]))
-                          for i in range(0, len(files_shuffle), self.files_per_batch)]
+        file_sets = [list(map(lambda idx: self.file_metas[idx], files_shuffle[i:i + self.files_per_batch]))
+                     for i in range(0, len(files_shuffle), self.files_per_batch)]
 
-        self.file_set_names = {''.join(map(lambda data_file: data_file.name, files)): files for files in self.file_sets}
+        self.file_set_names = {''.join(map(lambda data_file: data_file.name, files)): files for files in file_sets}
 
-        return self.file_sets
+        self.train_seq.update_file_sets(file_sets)
+        self.val_seq.update_file_sets(file_sets)
 
     def get_data_file(self, file_set_name, file_index):
         if self.file_set_name != file_set_name:
+            print("\nexisted file_set_name=", self.file_set_name, " required=", file_set_name, " load new files")
+
             del self.file_set_data
             self.file_set_name = file_set_name
             file_set = self.file_set_names[file_set_name]
@@ -87,10 +90,12 @@ class SimpleFeeder:
             self.cum_counts = []
 
         def on_epoch_end(self):
-            file_sets = self.outer.shuffle_files()
+            self.outer.shuffle_files()
+
+        def update_file_sets(self, file_sets):
             self.file_sets = [self.outer.MultiFilesAccessor2(files, self.data_accessor, self.batch_size) for files in file_sets]
             self.cum_counts = np.cumsum(list(map(lambda fs: fs.get_batch_count(), self.file_sets)))
-            print(self.file_sets)
+            print(list(map(lambda file_set: file_set.name, self.file_sets)))
 
         def __len__(self):
             'Denotes the number of batches per epoch'
@@ -99,11 +104,7 @@ class SimpleFeeder:
         def __getitem__(self, index):
             'Generate one batch of data'
             assert index < len(self)
-            print('batch_index =', index)
-
-            # if not self.file_sets:
-            #     'initialize file sets'
-            #     self.file_sets = self.outer.shuffle_files()
+            print('\nbatch_index =', index)
 
             file_set_index, batch_number = find_indexes(self.cum_counts, index)
             file_set = self.file_sets[file_set_index]
@@ -119,7 +120,7 @@ class SimpleFeeder:
 
             for i, j in enumerate(range(items_from, items_to)):
                 file_index, item_index = file_set[j]
-                if i < 10:
+                if i < 1:
                     print("i =", i, " j =", j, " file_set_index =", file_set_index,
                           " file_index =", file_index, " item_index =", item_index)
 
@@ -130,7 +131,7 @@ class SimpleFeeder:
 
             return X, (y1, y2)
 
-    class MultiFilesAccessor2:
+    class MultiFilesAccessor:
         def __init__(self, files, data_accessor, batch_size):
             self.files = files
             self.name = ''.join(map(lambda meta: meta.name, files))
@@ -143,6 +144,9 @@ class SimpleFeeder:
         def __len__(self):
             '''returns len in items'''
             return self.cum_count[-1]
+
+        def __str__(self):
+            return self.name
 
         def __getitem__(self, idx):
             index = self.shuffle_map[idx]
