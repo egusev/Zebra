@@ -10,63 +10,43 @@ def load_file(file):
     return state_list, move_list, result_list
 
 
-def find_index(lens, index):
-    return next(x for x, val in enumerate(lens) if index < val)
+def find_indexes(lens, index):
+    file_index = next(x for x, val in enumerate(lens) if index < val)
+    item_index = index - (lens[file_index - 1] if file_index > 0 else 0)
+    return file_index, item_index
 
 
 class SimpleFeeder:
 
     def __init__(self, files, batch_size=32, files_per_batch=2, train=0.8):
-        self.files = files
         self.files_per_batch = files_per_batch
-        self.sizes = []
-        for i, file in enumerate(files):
-            state_list, move_list, result_list = load_file(file)
+        self.file_metas = [self.DataFile(file, train) for file in files]
+
+        for i, file_meta in enumerate(self.file_metas):
             if i == 0:
-                self.Xdim = state_list.shape[1:]
-                self.y1dim = move_list.shape[1:]
-                self.y2dim = result_list.shape[1:]
+                self.Xdim = file_meta.Xdim
+                self.y1dim = file_meta.y1dim
+                self.y2dim = file_meta.y2dim
             else:
-                assert self.Xdim == state_list.shape[1:]
-                assert self.y1dim == move_list.shape[1:]
-                assert self.y2dim == result_list.shape[1:]
-            self.sizes.append(len(state_list))
+                assert self.Xdim == file_meta.Xdim
+                assert self.y1dim == file_meta.y1dim
+                assert self.y2dim == file_meta.y2dim
 
-        self.trains = [int(train * size) for size in self.sizes]
-        self.validations = [size - int(train * size) for size in self.sizes]
+        self.file_sets = []
 
-        self.batch_size = batch_size
-        # self.size = sum(self.sizes)
-        self.train_len = sum(self.trains)
-        self.validation_len = sum(self.validations)
-        self.file_set_index = -1
-        self.file_set = None
+        self.file_set_name = None
+        self.file_set_names = []
+        self.file_set_data = []
 
-        self.train_seq = self.InnerSequencer(self, self.Xdim, self.y1dim, self.y2dim, batch_size, self.trains,
-                                             self.train_len, self.get_train_fileset)
-        self.val_seq = self.InnerSequencer(self, self.Xdim, self.y1dim, self.y2dim, batch_size, self.validations,
-                                           self.validation_len, self.get_validation_fileset)
+        self.train_seq = self.InnerSequencer(self,
+                                             self.Xdim, self.y1dim, self.y2dim,
+                                             batch_size,
+                                             self.TrainDataAccessor())
 
-    def __len__(self):
-        return self.size
-
-    def update_shuffle_map(self):
-        # print("!!!! update shuffle map !!!!")
-        self.train_shuffle_maps = [np.random.permutation(size) for size in self.trains]
-        self.validation_shuffle_maps = [np.random.permutation(size) + self.trains[i] for i, size in
-                                        enumerate(self.validations)]
-
-        files_shuffle = np.random.permutation(len(self.files))
-        self.file_sets = [files_shuffle[i:i + self.files_per_batch] for i in
-                          range(0, len(files_shuffle), self.files_per_batch)]
-        self.file_sets_trains = [sum(map(lambda idx: self.trains[idx], file_set)) for file_set in self.file_sets]
-        self.file_sets_validations = [sum(map(lambda idx: self.validations[idx], file_set)) for file_set in
-                                      self.file_sets]
-
-        self.file_sets_trains_cum = np.cumsum(self.file_sets_trains)
-        self.file_sets_validations_cum = np.cumsum(self.file_sets_validations)
-
-        print(self.file_sets)
+        self.val_seq = self.InnerSequencer(self,
+                                           self.Xdim, self.y1dim, self.y2dim,
+                                           batch_size,
+                                           self.ValidationDataAccessor())
 
     def get_train(self):
         return self.train_seq
@@ -74,121 +54,105 @@ class SimpleFeeder:
     def get_validation(self):
         return self.val_seq
 
-    def get_file_set(self, index, limits, shuffle_maps):
-        if self.file_set_index != index:
-            del self.file_set
-            self.file_set = self.MultiFilesAccessor([self.files[file] for file in self.file_sets[index]],
-                                                    [limits[file] for file in self.file_sets[index]],
-                                                    [shuffle_maps[file] for file in self.file_sets[index]])
-        return self.file_set
+    def shuffle_files(self):
+        print("!!!! shuffle files!!!!\n")
+        files_shuffle = np.random.permutation(len(self.file_metas))
+        'list of file sets (metas)'
+        self.file_sets = [list(map(lambda idx: self.file_metas[idx], files_shuffle[i:i + self.files_per_batch]))
+                          for i in range(0, len(files_shuffle), self.files_per_batch)]
 
-    def get_train_fileset(self, index):
-        '''
+        self.file_set_names = {''.join(map(lambda data_file: data_file.name, files)): files for files in self.file_sets}
 
-        :param index: absolute index in the combined set
-        :return:
-                fileset  train fileset
-                index offset for the returning fileset
-        '''
-        file_set_index = find_index(self.file_sets_trains_cum, index)
-        return self.get_file_set(file_set_index, self.trains, self.train_shuffle_maps), self.file_sets_trains_cum[
-            file_set_index - 1] if file_set_index > 0 else 0
+        return self.file_sets
 
-    def get_validation_fileset(self, index):
-        '''
+    def get_data_file(self, file_set_name, file_index):
+        if self.file_set_name != file_set_name:
+            del self.file_set_data
+            self.file_set_name = file_set_name
+            file_set = self.file_set_names[file_set_name]
+            self.file_set_data = [load_file(file.name) for file in file_set]
 
-        :param index: absolute index in the combined set
-        :return:
-                fileset  validation fileset
-                index offset for the returning fileset
-        '''
-        file_set_index = find_index(self.file_sets_validations_cum, index)
-        return self.get_file_set(file_set_index, self.validations, self.validation_shuffle_maps), \
-               self.file_sets_validations_cum[file_set_index - 1] if file_set_index > 0 else 0
+        return self.file_set_data[file_index]
 
     class InnerSequencer(keras.utils.Sequence):
-        def __init__(self, outer, Xdim, y1dim, y2dim, batch_size, limits, len, file_set_getter):
+        def __init__(self, outer, Xdim, y1dim, y2dim, batch_size, data_accessor):
             self.outer = outer
             self.batch_size = batch_size
             self.Xdim = Xdim
             self.y1dim = y1dim
             self.y2dim = y2dim
-            self.len = len
-            self.limits = limits
-            self.file_set_getter = file_set_getter
+            self.data_accessor = data_accessor
+            self.file_sets = []
+            'count of batches per file set'
+            self.cum_counts = []
 
-        def update_step(self, shuffle_maps):
-            self.shuffle_maps = shuffle_maps
+        def on_epoch_end(self):
+            file_sets = self.outer.shuffle_files()
+            self.file_sets = [self.outer.MultiFilesAccessor2(files, self.data_accessor, self.batch_size) for files in file_sets]
+            self.cum_counts = np.cumsum(list(map(lambda fs: fs.get_batch_count(), self.file_sets)))
+            print(self.file_sets)
 
         def __len__(self):
             'Denotes the number of batches per epoch'
-            return int(np.floor(self.len / self.batch_size))
+            return self.cum_counts[-1]
 
         def __getitem__(self, index):
             'Generate one batch of data'
+            assert index < len(self)
+            print('batch_index =', index)
+
+            # if not self.file_sets:
+            #     'initialize file sets'
+            #     self.file_sets = self.outer.shuffle_files()
+
+            file_set_index, batch_number = find_indexes(self.cum_counts, index)
+            file_set = self.file_sets[file_set_index]
+            print("file_set_index=", file_set_index, ", name=", file_set.name)
 
             X = np.empty((self.batch_size, *self.Xdim))
             y1 = np.empty((self.batch_size, *self.y1dim))
             y2 = np.empty((self.batch_size, *self.y2dim))
 
-            for i, j in enumerate(range(index * self.batch_size,
-                                        min((index + 1) * self.batch_size, self.len))):
-                file_set, offset = self.file_set_getter(j)
-                print(i, " ", j, " ", offset, " ", j - offset)
-                item = file_set[j - offset]
-                X[i] = item[0]
-                y1[i] = item[1]
-                y2[i] = item[2]
+            items_from = batch_number * self.batch_size
+            items_to = min((batch_number + 1) * self.batch_size, len(file_set))
+            print("items_from =", items_from, " items_to =", items_to)
+
+            for i, j in enumerate(range(items_from, items_to)):
+                file_index, item_index = file_set[j]
+                if i < 10:
+                    print("i =", i, " j =", j, " file_set_index =", file_set_index,
+                          " file_index =", file_index, " item_index =", item_index)
+
+                file = self.outer.get_data_file(file_set.name, file_index)
+                X[i] = file[0][item_index]
+                y1[i] = file[1][item_index]
+                y2[i] = file[2][item_index]
 
             return X, (y1, y2)
 
-        def on_epoch_end(self):
-            self.outer.update_shuffle_map()
-
-    class MultiFilesAccessor:
-        def __init__(self, files, limits, shuffle_maps):
-            assert len(files) == len(limits)
-            assert len(files) == len(shuffle_maps)
-
-            self.files = [load_file(file) for file in files]
-            self.limits = limits
-            self.cum_lens = np.cumsum(self.limits)
-            self.shuffle_maps = shuffle_maps
+    class MultiFilesAccessor2:
+        def __init__(self, files, data_accessor, batch_size):
+            self.files = files
+            self.name = ''.join(map(lambda meta: meta.name, files))
+            self.data_accessor = data_accessor
+            self.data = [load_file(file.name) for file in files]
+            self.cum_count = np.cumsum([data_accessor.get_len(file) for file in files])
+            self.shuffle_map = np.random.permutation(self.cum_count[-1])
+            self.batch_size = batch_size
 
         def __len__(self):
-            return sum(self.limits)
+            '''returns len in items'''
+            return self.cum_count[-1]
 
-        def __getitem__(self, item):
-            file_index = find_index(self.cum_lens, item)
-            index = self.shuffle_maps[file_index][item]
-            return self.files[file_index][0][index], self.files[file_index][1][index], self.files[file_index][2][index]
+        def __getitem__(self, idx):
+            index = self.shuffle_map[idx]
+            file_index, item_index = find_indexes(self.cum_count, index)
+            index_in_file = item_index + self.data_accessor.get_offset(self.files[file_index])
+            return file_index, index_in_file
 
-    class MultiFilesAccessor2:
-        def __init__(self, files):
-            self.files = files
-            self.data = [load_file(file.name) for file in files]
-            self.train_cum_counts = np.cumsum([file.trains for file in files])
-            self.validation_cum_counts = np.cumsum([file.trains for file in files])
-            self.train_shuffle_map = np.random.permutation(self.train_cum_counts[-1])
-
-        def train_len(self):
-            return self.train_cum_counts[-1]
-
-        def validation_len(self):
-            return self.validation_cum_counts[-1]
-
-        def get_train(self, idx):
-            index = self.train_shuffle_map[idx]
-            file_index = find_index(self.train_cum_counts, index)
-            file = self.data[file_index]
-            item_index = self.train_cum_counts[file_index - 1] if file_index > 0 else 0
-            return file[0][item_index], file[1][item_index], file[2][item_index]
-
-        def get_validation(self, index):
-            file_index = find_index(self.validation_cum_counts, index)
-            file = self.data[file_index]
-            item_index = (self.validation_cum_counts[file_index - 1] if file_index > 0 else 0) + file.trains
-            return file[0][item_index], file[1][item_index], file[2][item_index]
+        def get_batch_count(self):
+            # floor?
+            return int(np.ceil(len(self) / self.batch_size))
 
     class DataFile:
         def __init__(self, name, train=0.8):
@@ -199,9 +163,32 @@ class SimpleFeeder:
             assert len(move_list) == self.len
             assert len(result_list) == self.len
 
+            print("file=", name," len=", self.len)
+
             self.trains = int(train * self.len)
             self.validations = self.len - self.trains
 
             self.Xdim = state_list.shape[1:]
             self.y1dim = move_list.shape[1:]
             self.y2dim = result_list.shape[1:]
+
+    class TrainDataAccessor:
+        def get_len(self, data_file):
+            return data_file.trains
+
+        def get_offset(self, data_file):
+            return 0
+
+        def get_name(self):
+            return "train"
+
+    class ValidationDataAccessor:
+        def get_len(self, data_file):
+            return data_file.validations
+
+        def get_offset(self, data_file):
+            return data_file.trains
+
+        def get_name(self):
+            return "validation"
+
