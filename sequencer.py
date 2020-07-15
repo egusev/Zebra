@@ -136,7 +136,6 @@ class SimpleFeeder:
             self.files = files
             self.name = ''.join(map(lambda meta: meta.name, files))
             self.data_accessor = data_accessor
-            self.data = [load_file(file.name) for file in files]
             self.cum_count = np.cumsum([data_accessor.get_len(file) for file in files])
             self.shuffle_map = np.random.permutation(self.cum_count[-1])
             self.batch_size = batch_size
